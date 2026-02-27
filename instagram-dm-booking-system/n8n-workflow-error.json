@@ -1,0 +1,50 @@
+{
+  "name": "Hollywood Colourblend - Error Notification",
+  "nodes": [
+    {
+      "id": "error_node_01",
+      "name": "Execution Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 340],
+      "parameters": {}
+    },
+    {
+      "id": "error_node_02",
+      "name": "Email Catherine Error Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [480, 340],
+      "parameters": {
+        "fromEmail": "={{ $env.ALERT_EMAIL_FROM }}",
+        "toEmail": "={{ $env.CATHERINE_EMAIL }}",
+        "subject": "⚠️ Instagram Bot Error – Action May Be Required",
+        "emailFormat": "html",
+        "html": "=<h2>Hollywood Colourblend – Booking Bot Error</h2>\n<p>Hi Catherine,</p>\n<p>Your Instagram DM booking assistant encountered an error. No message was sent to the client for this interaction.</p>\n<hr>\n<h3>Error Details</h3>\n<p><strong>Workflow:</strong> {{ $json.workflow.name }}</p>\n<p><strong>Node that failed:</strong> {{ $json.execution.lastNodeExecuted }}</p>\n<p><strong>Error message:</strong> {{ $json.execution.error.message }}</p>\n<p><strong>Time:</strong> {{ $now }}</p>\n<hr>\n<h3>What to do</h3>\n<ol>\n  <li>Log in to <a href=\"https://hollywoodcolourblend.app.n8n.cloud\">n8n</a> and check the execution log</li>\n  <li>Check if the client who messaged you is waiting for a reply</li>\n  <li>Respond manually via ManyChat Live Chat if needed</li>\n</ol>\n<p>If errors keep happening, check your API keys haven't expired.</p>\n<br>\n<p>— Your Booking Bot</p>",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Execution Error Trigger": {
+      "main": [
+        [
+          { "node": "Email Catherine Error Alert", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "hcb-error-workflow-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "id": "hcb-error-notification",
+  "tags": [
+    { "id": "hcb-tag-1", "name": "Hollywood Colourblend" }
+  ]
+}
