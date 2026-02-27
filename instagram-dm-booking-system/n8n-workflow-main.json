@@ -1,0 +1,441 @@
+{
+  "name": "Hollywood Colourblend - Instagram DM Booking Assistant",
+  "nodes": [
+    {
+      "id": "node_01_webhook",
+      "name": "Instagram DM Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 340],
+      "webhookId": "hcb-instagram-dm-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "instagram-dm",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "node_02_respond",
+      "name": "Acknowledge ManyChat (200 OK)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [460, 240],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"received\" }",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "node_03_check_takeover",
+      "name": "Human Takeover Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 460],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond_takeover_check",
+              "leftValue": "={{ $('Instagram DM Webhook').first().json.body.human_takeover }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node_04_bot_paused",
+      "name": "Bot Paused - Catherine Has Control",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [700, 360],
+      "parameters": {}
+    },
+    {
+      "id": "node_05_fetch_history",
+      "name": "Fetch Conversation from Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 560],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/conversations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "contact_id",
+              "value": "=eq.{{ $('Instagram DM Webhook').first().json.body.contact_id }}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "node_06_build_request",
+      "name": "Build Claude Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 560],
+      "parameters": {
+        "jsCode": "// ─── Pull data from the webhook ───────────────────────────────────────────\nconst webhookBody = $('Instagram DM Webhook').first().json.body;\nconst contactId  = webhookBody.contact_id  || '';\nconst firstName  = webhookBody.first_name  || 'there';\nconst lastName   = webhookBody.last_name   || '';\nconst newMessage = webhookBody.message     || '';\n\n// ─── Pull existing conversation from Supabase ─────────────────────────────\nconst supabaseRows = $input.all();\nlet storedMessages = [];\n\nif (\n  supabaseRows.length > 0 &&\n  supabaseRows[0].json &&\n  Array.isArray(supabaseRows[0].json) &&\n  supabaseRows[0].json.length > 0 &&\n  supabaseRows[0].json[0].messages\n) {\n  storedMessages = supabaseRows[0].json[0].messages;\n}\n\n// ─── Append the new user message ─────────────────────────────────────────\nstoredMessages.push({\n  role: 'user',\n  content: newMessage,\n  timestamp: new Date().toISOString()\n});\n\n// Keep last 20 messages (10 full turns)\nif (storedMessages.length > 20) {\n  storedMessages = storedMessages.slice(-20);\n}\n\n// ─── Build clean messages array for Claude (no timestamps) ────────────────\nconst claudeMessages = storedMessages.map(m => ({\n  role: m.role,\n  content: m.content\n}));\n\n// ─── Assemble the full Claude API payload ────────────────────────────────\nconst claudePayload = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 600,\n  system: $env.CLAUDE_SYSTEM_PROMPT,\n  messages: claudeMessages\n};\n\nreturn [{\n  json: {\n    contact_id:      contactId,\n    first_name:      firstName,\n    last_name:       lastName,\n    new_message:     newMessage,\n    stored_messages: storedMessages,\n    claude_payload:  JSON.stringify(claudePayload)\n  }\n}];"
+      }
+    },
+    {
+      "id": "node_07_claude",
+      "name": "Call Claude AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 560],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.CLAUDE_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.claude_payload }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "node_08_process_response",
+      "name": "Process Claude Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 560],
+      "parameters": {
+        "jsCode": "// ─── Get Claude's raw response ───────────────────────────────────────────\nconst claudeResponse = $input.first().json;\nconst prevData       = $('Build Claude Request').first().json;\n\n// ─── Extract text from Claude's response ─────────────────────────────────\nlet responseText = '';\nif (\n  claudeResponse.content &&\n  claudeResponse.content.length > 0 &&\n  claudeResponse.content[0].type === 'text'\n) {\n  responseText = claudeResponse.content[0].text;\n} else {\n  // Fallback if Claude returns an error\n  responseText = \"I'm sorry, I'm having a quick technical hiccup. Please bear with me — or feel free to DM us again in a moment! 💫\";\n}\n\n// ─── Detect escalation flag ──────────────────────────────────────────────\nconst needsEscalation = responseText.includes('[HUMAN_NEEDED]');\n\n// ─── Strip the flag from the message sent to the client ──────────────────\nconst cleanResponse = responseText.replace('[HUMAN_NEEDED]', '').trim();\n\n// ─── Append AI turn to conversation history ───────────────────────────────\nconst updatedMessages = [\n  ...prevData.stored_messages,\n  {\n    role: 'assistant',\n    content: cleanResponse,\n    timestamp: new Date().toISOString()\n  }\n];\n\n// Keep last 20 messages\nconst trimmedMessages = updatedMessages.length > 20\n  ? updatedMessages.slice(-20)\n  : updatedMessages;\n\nreturn [{\n  json: {\n    contact_id:       prevData.contact_id,\n    first_name:       prevData.first_name,\n    response_text:    cleanResponse,\n    needs_escalation: needsEscalation,\n    updated_messages: trimmedMessages\n  }\n}];"
+      }
+    },
+    {
+      "id": "node_09_save_history",
+      "name": "Save Conversation to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1660, 560],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/conversations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ contact_id: $json.contact_id, contact_name: $json.first_name, messages: $json.updated_messages, updated_at: new Date().toISOString() }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "node_10_route_escalation",
+      "name": "Needs Human Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1900, 560],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond_escalation_check",
+              "leftValue": "={{ $('Process Claude Response').first().json.needs_escalation }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node_11_send_escalation_dm",
+      "name": "Send Escalation DM via ManyChat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2140, 460],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.manychat.com/fb/sending/sendContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MANYCHAT_API_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ subscriber_id: $('Process Claude Response').first().json.contact_id, data: { version: 'v2', content: { messages: [{ type: 'text', text: $('Process Claude Response').first().json.response_text }] } }, message_tag: 'ACCOUNT_UPDATE' }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "node_12_set_takeover_flag",
+      "name": "Set Human Takeover Flag in ManyChat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2380, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.manychat.com/fb/subscribers/setCustomField",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MANYCHAT_API_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ subscriber_id: $('Process Claude Response').first().json.contact_id, field_id: $env.MANYCHAT_HUMAN_TAKEOVER_FIELD_ID, field_value: true }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "node_13_alert_catherine",
+      "name": "Alert Catherine - Human Needed",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2620, 400],
+      "parameters": {
+        "fromEmail": "={{ $env.ALERT_EMAIL_FROM }}",
+        "toEmail": "={{ $env.CATHERINE_EMAIL }}",
+        "subject": "Action Required: Instagram DM Needs Your Attention 💬",
+        "emailFormat": "html",
+        "html": "=<h2>Hollywood Colourblend – Human Takeover Required</h2>\n<p>Hi Catherine,</p>\n<p>A client has triggered the <strong>human takeover protocol</strong> in your Instagram DM booking assistant. The bot has been paused for this conversation.</p>\n<hr>\n<p><strong>Client:</strong> {{ $('Process Claude Response').first().json.first_name }}</p>\n<p><strong>Contact ID:</strong> {{ $('Process Claude Response').first().json.contact_id }}</p>\n<p><strong>Their last message context triggered an escalation.</strong></p>\n<hr>\n<p><strong>What to do:</strong></p>\n<ol>\n  <li>Open <a href=\"https://manychat.com\">ManyChat Live Chat</a></li>\n  <li>Find this contact and respond personally</li>\n  <li>When done, set their <code>human_takeover</code> field back to <strong>false</strong> to reactivate the bot</li>\n</ol>\n<p>The bot will not respond to this contact until you reactivate it.</p>\n<br>\n<p>— Your Booking Assistant</p>",
+        "options": {}
+      }
+    },
+    {
+      "id": "node_14_send_normal_dm",
+      "name": "Send Normal DM via ManyChat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2140, 680],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.manychat.com/fb/sending/sendContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.MANYCHAT_API_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ subscriber_id: $('Process Claude Response').first().json.contact_id, data: { version: 'v2', content: { messages: [{ type: 'text', text: $('Process Claude Response').first().json.response_text }] } }, message_tag: 'ACCOUNT_UPDATE' }) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Instagram DM Webhook": {
+      "main": [
+        [
+          { "node": "Acknowledge ManyChat (200 OK)", "type": "main", "index": 0 },
+          { "node": "Human Takeover Active?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Human Takeover Active?": {
+      "main": [
+        [
+          { "node": "Bot Paused - Catherine Has Control", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Fetch Conversation from Supabase", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Conversation from Supabase": {
+      "main": [
+        [
+          { "node": "Build Claude Request", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Claude Request": {
+      "main": [
+        [
+          { "node": "Call Claude AI", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Call Claude AI": {
+      "main": [
+        [
+          { "node": "Process Claude Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Process Claude Response": {
+      "main": [
+        [
+          { "node": "Save Conversation to Supabase", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Save Conversation to Supabase": {
+      "main": [
+        [
+          { "node": "Needs Human Escalation?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Needs Human Escalation?": {
+      "main": [
+        [
+          { "node": "Send Escalation DM via ManyChat", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Send Normal DM via ManyChat", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Escalation DM via ManyChat": {
+      "main": [
+        [
+          { "node": "Set Human Takeover Flag in ManyChat", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Set Human Takeover Flag in ManyChat": {
+      "main": [
+        [
+          { "node": "Alert Catherine - Human Needed", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "REPLACE_WITH_ERROR_WORKFLOW_ID"
+  },
+  "versionId": "hcb-main-workflow-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "id": "hcb-instagram-dm-main",
+  "tags": [
+    { "id": "hcb-tag-1", "name": "Hollywood Colourblend" },
+    { "id": "hcb-tag-2", "name": "Instagram Booking" }
+  ]
+}
